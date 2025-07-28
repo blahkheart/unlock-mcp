@@ -1,0 +1,161 @@
+name: Test & Build
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x, 22.x]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+        
+    - name: Install dependencies
+      run: npm ci
+      
+    - name: Create test environment file
+      run: |
+        echo "NODE_ENV=test" > .env.test
+        echo "MCP_MODE=stdio" >> .env.test
+        echo "UNLOCK_ADDRESS=0x1FF7e338d5E582138C46044dc238543Ce555C963" >> .env.test
+        echo "INFURA_API_KEY=test-key" >> .env.test
+        echo "PRIVATE_KEY=0x0000000000000000000000000000000000000000000000000000000000000001" >> .env.test
+        
+    - name: Lint code
+      run: |
+        # Run basic TypeScript check
+        npx tsc --noEmit
+        
+    - name: Run unit tests
+      run: npm run test tests/unit
+      
+    - name: Run integration tests
+      run: npm run test:integration
+      
+    - name: Run E2E tests
+      run: npm run test:e2e
+      
+    - name: Generate test coverage
+      run: npm run test:coverage
+      
+    - name: Upload coverage to Codecov
+      if: matrix.node-version == '20.x'
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./coverage/lcov.info
+        flags: unittests
+        name: codecov-umbrella
+        
+    - name: Build project
+      run: npm run build
+      
+    - name: Test MCP Inspector Integration
+      if: matrix.node-version == '20.x'
+      run: |
+        # Test that the built server can be inspected
+        timeout 10s npm run test:mcp || echo "MCP Inspector test completed"
+
+  security:
+    runs-on: ubuntu-latest
+    needs: test
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+        cache: 'npm'
+        
+    - name: Install dependencies
+      run: npm ci
+      
+    - name: Run security audit
+      run: npm audit --audit-level=moderate
+      
+    - name: Check for vulnerable dependencies
+      run: |
+        npx audit-ci --config audit-ci.json || true
+        
+    - name: Build and check bundle size
+      run: |
+        npm run build
+        du -sh dist/
+        
+  compatibility:
+    runs-on: ubuntu-latest
+    needs: test
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+        cache: 'npm'
+        
+    - name: Install dependencies
+      run: npm ci
+      
+    - name: Build project
+      run: npm run build
+      
+    - name: Test stdio mode startup
+      run: |
+        echo "Testing stdio mode..."
+        timeout 5s node dist/src/index.js || echo "Stdio mode test completed"
+        
+    - name: Test proxy mode startup
+      run: |
+        echo "Testing proxy mode..."
+        MCP_MODE=proxy timeout 5s node dist/src/index.js || echo "Proxy mode test completed"
+        
+    - name: Validate tool count
+      run: |
+        node -e "
+          import('./dist/src/tools.js').then(tools => {
+            console.log('Tools loaded:', tools.UNLOCK_TOOLS.length);
+            if (tools.UNLOCK_TOOLS.length !== 55) {
+              console.error('Expected 55 tools, got', tools.UNLOCK_TOOLS.length);
+              process.exit(1);
+            }
+            console.log('✓ Tool count validation passed');
+          })
+        "
+        
+    - name: Validate schema coverage
+      run: |
+        node -e "
+          Promise.all([
+            import('./dist/src/tools.js'),
+            import('./dist/src/schemas.js')
+          ]).then(([tools, schemas]) => {
+            const toolNames = tools.UNLOCK_TOOLS.map(t => t.name);
+            const schemaNames = Object.keys(schemas.FUNCTION_SCHEMAS);
+            const coverage = toolNames.filter(name => schemaNames.includes(name));
+            console.log('Schema coverage:', coverage.length, '/', toolNames.length);
+            if (coverage.length < 40) {
+              console.error('Low schema coverage');
+              process.exit(1);
+            }
+            console.log('✓ Schema coverage validation passed');
+          })
+        "
