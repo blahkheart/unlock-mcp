@@ -1,6 +1,6 @@
 # Unlock-MCP
 
-A **Model Context Protocol (MCP)** server that provides comprehensive access to **Unlock Protocol** on **Base** and **Base-Sepolia** networks. This server exposes all public read and write functions from the Unlock Protocol smart contracts, enabling AI agents to interact with membership, subscription, and access control functionality.
+**Unlock MCP** is an MCP server that provides comprehensive access to **Unlock Protocol** on **Base** and **Base-Sepolia** networks. This server exposes a number of public read and write functions from the Unlock Protocol smart contracts, enabling AI agents to interact with membership, subscription, and access control functionality.
 
 ## 🚀 Features
 
